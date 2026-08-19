@@ -1,0 +1,180 @@
+173
+174
+175
+176
+177
+178
+179
+180
+181
+182
+183
+184
+185
+186
+187
+188
+189
+190
+191
+192
+193
+194
+195
+196
+197
+198
+199
+200</pre><pre class="code" id="code2"><span class="com">//! Executes a loop: spawns `claude` repeatedly and evaluates the stop condition.</span>
+
+<span class="kw">use</span> <span class="kw">crate</span>::config::{<span class="kw">self</span>, LoopConfig, StopKind};
+<span class="kw">use</span> <span class="kw">crate</span>::ui;
+<span class="kw">use</span> std::error::<span class="ty">Error</span>;
+<span class="kw">use</span> std::<span class="ty">io</span>::{BufRead, <span class="ty">BufReader</span>};
+<span class="kw">use</span> std::path::<span class="ty">Path</span>;
+<span class="kw">use</span> std::process::{<span class="ty">Command</span>, <span class="ty">Stdio</span>};
+<span class="kw">use</span> std::time::{<span class="ty">Duration</span>, <span class="ty">Instant</span>};
+
+<span class="com">/// Print, without executing, the commands a run would issue.</span>
+<span class="kw">pub</span> <span class="kw">fn</span> preview_command(cfg: &amp;LoopConfig) {
+    ui::step(<span class="str">"Dry run — commands that would execute:"</span>);
+    <span class="mac">println!</span>();
+
+    <span class="kw">let</span> p1 = config::render_prompt(cfg, <span class="num">1</span>, <span class="str">""</span>);
+    <span class="kw">let</span> a1 = config::claude_args(cfg, <span class="num">1</span>, &amp;p1);
+    <span class="mac">println!</span>(<span class="str">"{}"</span>, ui::bold(<span class="str">"iteration 1:"</span>));
+    <span class="mac">println!</span>(<span class="str">"  {}"</span>, display_cmd(&amp;a1));
+    <span class="mac">println!</span>();
+
+    <span class="kw">let</span> p2 = config::render_prompt(cfg, <span class="num">2</span>, <span class="str">"&lt;last check output&gt;"</span>);
+    <span class="kw">let</span> a2 = config::claude_args(cfg, <span class="num">2</span>, &amp;p2);
+    <span class="mac">println!</span>(<span class="str">"{}"</span>, ui::bold(<span class="str">"iteration 2+:"</span>));
+    <span class="mac">println!</span>(<span class="str">"  {}"</span>, display_cmd(&amp;a2));
+
+    <span class="kw">if</span> cfg.stop_kind == StopKind::<span class="ty">Command</span> {
+        <span class="mac">println!</span>();
+        <span class="mac">println!</span>(<span class="str">"{}"</span>, ui::bold(<span class="str">"stop check (each iteration):"</span>));
+        <span class="mac">println!</span>(<span class="str">"  sh -c {}"</span>, shell_quote(&amp;cfg.stop_command));
+    }
+    <span class="mac">println!</span>();
+}
+
+<span class="com">/// Run the loop. Returns a process exit code.</span>
+<span class="kw">pub</span> <span class="kw">fn</span> run(cfg: &amp;LoopConfig, dry_run: <span class="ty">bool</span>) -&gt; <span class="ty">Result</span>&lt;<span class="ty">i32</span>, <span class="ty">Box</span>&lt;<span class="kw">dyn</span> <span class="ty">Error</span>&gt;&gt; {
+    <span class="kw">let</span> dir = <span class="ty">Path</span>::new(&amp;cfg.workdir);
+    <span class="kw">if</span> !dir.is_dir() {
+        <span class="kw">return</span> <span class="ty">Err</span>(<span class="mac">format!</span>(<span class="str">"working directory does not exist: {}"</span>, cfg.workdir).into());
+    }
+
+    ui::banner(&amp;<span class="mac">format!</span>(<span class="str">"cloop · {}"</span>, cfg.name));
+    <span class="mac">println!</span>();
+    <span class="mac">print!</span>(<span class="str">"{}"</span>, config::summary(cfg));
+    <span class="mac">println!</span>();
+
+    <span class="kw">if</span> dry_run {
+        preview_command(cfg);
+        <span class="kw">return</span> <span class="ty">Ok</span>(<span class="num">0</span>);
+    }
+
+    <span class="kw">let</span> start = <span class="ty">Instant</span>::now();
+    <span class="kw">let</span> <span class="kw">mut</span> check_output = <span class="ty">String</span>::new();
+
+    <span class="kw">for</span> iteration <span class="kw">in</span> <span class="num">1</span>..=cfg.max_iterations {
+        <span class="kw">let</span> prompt = config::render_prompt(cfg, iteration, &amp;check_output);
+        <span class="kw">let</span> args = config::claude_args(cfg, iteration, &amp;prompt);
+
+        ui::step(&amp;<span class="mac">format!</span>(
+            <span class="str">"iteration {} / {}  {}"</span>,
+            iteration,
+            cfg.max_iterations,
+            ui::dim(&amp;<span class="mac">format!</span>(<span class="str">"[{}]"</span>, elapsed(start)))
+        ));
+        <span class="mac">println!</span>(<span class="str">"  {}"</span>, ui::dim(&amp;display_cmd(&amp;args)));
+        <span class="mac">println!</span>();
+
+        <span class="kw">let</span> <span class="kw">mut</span> child = <span class="kw">match</span> <span class="ty">Command</span>::new(<span class="str">"claude"</span>)
+            .args(&amp;args)
+            .current_dir(dir)
+            .stdin(<span class="ty">Stdio</span>::null())
+            .stdout(<span class="ty">Stdio</span>::piped())
+            .stderr(<span class="ty">Stdio</span>::inherit())
+            .spawn()
+        {
+            <span class="ty">Ok</span>(c) =&gt; c,
+            <span class="ty">Err</span>(e) <span class="kw">if</span> e.kind() == std::<span class="ty">io</span>::ErrorKind::NotFound =&gt; {
+                <span class="kw">return</span> <span class="ty">Err</span>(<span class="str">"`claude` was not found on your PATH. Install Claude Code first: \
+                            https://docs.claude.com/en/docs/claude-code"</span>
+                    .into());
+            }
+            <span class="ty">Err</span>(e) =&gt; <span class="kw">return</span> <span class="ty">Err</span>(e.into()),
+        };
+
+        <span class="kw">let</span> <span class="kw">mut</span> captured = <span class="ty">String</span>::new();
+        <span class="kw">if</span> <span class="kw">let</span> <span class="ty">Some</span>(out) = child.stdout.take() {
+            <span class="kw">let</span> reader = <span class="ty">BufReader</span>::new(out);
+            <span class="kw">for</span> line <span class="kw">in</span> reader.lines() {
+                <span class="kw">let</span> line = line?;
+                <span class="mac">println!</span>(<span class="str">"{}"</span>, line);
+                captured.push_str(&amp;line);
+                captured.push(<span class="chr">'\n'</span>);
+            }
+        }
+
+        <span class="kw">let</span> status = child.wait()?;
+        <span class="kw">if</span> !status.success() {
+            ui::warn(&amp;<span class="mac">format!</span>(
+                <span class="str">"claude exited with {} (continuing)"</span>,
+                status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| <span class="str">"a signal"</span>.into())
+            ));
+        }
+        <span class="mac">println!</span>();
+
+        <span class="kw">match</span> cfg.stop_kind {
+            StopKind::Marker =&gt; {
+                <span class="kw">if</span> captured.contains(&amp;cfg.stop_marker) {
+                    ui::success(&amp;<span class="mac">format!</span>(
+                        <span class="str">"marker '{}' seen on iteration {} ({})"</span>,
+                        cfg.stop_marker,
+                        iteration,
+                        elapsed(start)
+                    ));
+                    <span class="kw">return</span> <span class="ty">Ok</span>(<span class="num">0</span>);
+                }
+            }
+            StopKind::<span class="ty">Command</span> =&gt; {
+                ui::info(&amp;<span class="mac">format!</span>(<span class="str">"running check: {}"</span>, cfg.stop_command));
+                <span class="kw">let</span> out = <span class="ty">Command</span>::new(<span class="str">"sh"</span>)
+                    .arg(<span class="str">"-c"</span>)
+                    .arg(&amp;cfg.stop_command)
+                    .current_dir(dir)
+                    .output()?;
+                <span class="kw">let</span> <span class="kw">mut</span> combined = <span class="ty">String</span>::from_utf8_lossy(&amp;out.stdout).into_owned();
+                combined.push_str(&amp;<span class="ty">String</span>::from_utf8_lossy(&amp;out.stderr));
+                check_output = combined;
+                <span class="kw">if</span> out.status.success() {
+                    ui::success(&amp;<span class="mac">format!</span>(
+                        <span class="str">"check passed on iteration {} ({})"</span>,
+                        iteration,
+                        elapsed(start)
+                    ));
+                    <span class="kw">return</span> <span class="ty">Ok</span>(<span class="num">0</span>);
+                } <span class="kw">else</span> {
+                    ui::warn(<span class="str">"check still failing"</span>);
+                }
+            }
+            StopKind::Iterations =&gt; {}
+        }
+
+        <span class="kw">if</span> cfg.delay_secs &gt; <span class="num">0</span> &amp;&amp; iteration &lt; cfg.max_iterations {
+            std::thread::sleep(<span class="ty">Duration</span>::from_secs(cfg.delay_secs));
+        }
+    }
+
+    <span class="kw">match</span> cfg.stop_kind {
+        StopKind::Iterations =&gt; {
+            ui::success(&amp;<span class="mac">format!</span>(
+                <span class="str">"completed {} iterations ({})"</span>,
+                cfg.max_iterations,

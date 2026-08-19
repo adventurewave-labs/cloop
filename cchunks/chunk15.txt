@@ -1,0 +1,180 @@
+                elapsed(start)
+            ));
+            <span class="ty">Ok</span>(<span class="num">0</span>)
+        }
+        _ =&gt; {
+            ui::error(&amp;<span class="mac">format!</span>(
+                <span class="str">"reached the {}-iteration cap without satisfying the stop condition"</span>,
+                cfg.max_iterations
+            ));
+            <span class="ty">Ok</span>(<span class="num">1</span>)
+        }
+    }
+}
+
+<span class="kw">fn</span> elapsed(start: <span class="ty">Instant</span>) -&gt; <span class="ty">String</span> {
+    <span class="kw">let</span> secs = start.elapsed().as_secs();
+    <span class="mac">format!</span>(<span class="str">"{}m{:02}s"</span>, secs / <span class="num">60</span>, secs % <span class="num">60</span>)
+}
+
+<span class="com">/// Render args as a readable single-line command (truncating a long prompt).</span>
+<span class="kw">fn</span> display_cmd(args: &amp;[<span class="ty">String</span>]) -&gt; <span class="ty">String</span> {
+    <span class="kw">let</span> <span class="kw">mut</span> parts: <span class="ty">Vec</span>&lt;<span class="ty">String</span>&gt; = <span class="mac">vec!</span>[<span class="str">"claude"</span>.to_string()];
+    <span class="kw">for</span> a <span class="kw">in</span> args {
+        <span class="kw">let</span> one_line: <span class="ty">String</span> = a.chars().map(|c| <span class="kw">if</span> c == <span class="chr">'\n'</span> { <span class="chr">' '</span> } <span class="kw">else</span> { c }).collect();
+        <span class="kw">let</span> shown = <span class="kw">if</span> one_line.chars().count() &gt; <span class="num">80</span> {
+            <span class="kw">let</span> <span class="kw">mut</span> t: <span class="ty">String</span> = one_line.chars().take(<span class="num">77</span>).collect();
+            t.push(<span class="chr">'…'</span>);
+            t
+        } <span class="kw">else</span> {
+            one_line
+        };
+        parts.push(shell_quote(&amp;shown));
+    }
+    parts.join(<span class="str">" "</span>)
+}
+
+<span class="com">/// Minimal shell quoting for display purposes only.</span>
+<span class="kw">fn</span> shell_quote(s: &amp;<span class="ty">str</span>) -&gt; <span class="ty">String</span> {
+    <span class="kw">if</span> !s.is_empty()
+        &amp;&amp; s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || <span class="str">"-_./=:,"</span>.contains(c))
+    {
+        s.to_string()
+    } <span class="kw">else</span> {
+        <span class="mac">format!</span>(<span class="str">"'{}'"</span>, s.replace(<span class="chr">'\''</span>, <span class="str">"'\\''"</span>))
+    }
+}</pre></div><p class="srcDesc">the executor — spawns claude each iteration and evaluates the stop condition</p></div>
+<div class="srcPanel" data-idx="3"><div class="srcHead"><span class="srcPath">src/wizard.rs</span><button class="copyBtn" data-copy="code3">copy</button></div><div class="codeWrap"><pre class="gutter">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+66
+67
+68
+69
+70
+71
+72
+73
+74
+75
+76
+77
+78
+79
+80
+81
+82
+83
+84
+85
+86
+87
+88
+89
+90
+91
+92
+93
+94
+95
+96
+97
+98
+99
+100
+101
+102
+103
+104
+105
+106
+107
+108
+109
+110
+111
+112
+113
+114
+115
+116
+117
+118
+119
+120
+121
+122
+123
+124
+125
+126
+127
+128
+129
+130
+131
+132
+133
