@@ -1,0 +1,24 @@
+[package]
+name = "cloop"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Agentic loops for Claude Code — wrap `claude --print` in a loop until tests pass, a marker appears, or N iterations."
+license = "MIT"
+repository = "https://github.com/adventurewave-labs/cloop"
+readme = "README.md"
+keywords = ["claude", "claude-code", "agent", "automation", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+# Intentionally zero dependencies: builds instantly, nothing to audit,
+# trivial to vendor into the turbo-flow toolchain.
+
+[[bin]]
+name = "cloop"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
