@@ -1,0 +1,180 @@
+            runner::run(&amp;cfg, <span class="kw">true</span>)?;
+            <span class="mac">println!</span>();
+        }
+        <span class="kw">let</span> go = ui::ask_bool(<span class="str">"Run the loop now?"</span>, !cfg.skip_permissions)?;
+        <span class="kw">if</span> go {
+            <span class="mac">println!</span>();
+            <span class="kw">return</span> runner::run(&amp;cfg, <span class="kw">false</span>);
+        }
+    }
+
+    ui::info(&amp;<span class="mac">format!</span>(<span class="str">"Run it later with:  cloop run {}"</span>, cfg.name));
+    <span class="ty">Ok</span>(<span class="num">0</span>)
+}
+
+<span class="kw">fn</span> cmd_run(args: &amp;[<span class="ty">String</span>]) -&gt; <span class="ty">Result</span>&lt;<span class="ty">i32</span>, <span class="ty">Box</span>&lt;<span class="kw">dyn</span> <span class="ty">Error</span>&gt;&gt; {
+    <span class="kw">let</span> <span class="kw">mut</span> name: <span class="ty">Option</span>&lt;<span class="ty">String</span>&gt; = <span class="ty">None</span>;
+    <span class="kw">let</span> <span class="kw">mut</span> config_path: <span class="ty">Option</span>&lt;<span class="ty">String</span>&gt; = <span class="ty">None</span>;
+    <span class="kw">let</span> <span class="kw">mut</span> dry_run = <span class="kw">false</span>;
+    <span class="kw">let</span> <span class="kw">mut</span> yes = <span class="kw">false</span>;
+    <span class="kw">let</span> <span class="kw">mut</span> max_override: <span class="ty">Option</span>&lt;<span class="ty">u64</span>&gt; = <span class="ty">None</span>;
+
+    <span class="kw">let</span> <span class="kw">mut</span> i = <span class="num">0</span>;
+    <span class="kw">while</span> i &lt; args.len() {
+        <span class="kw">match</span> args[i].as_str() {
+            <span class="str">"--config"</span> =&gt; {
+                i += <span class="num">1</span>;
+                config_path = <span class="ty">Some</span>(args.get(i).ok_or(<span class="str">"--config needs a path"</span>)?.clone());
+            }
+            <span class="str">"-n"</span> | <span class="str">"--dry-run"</span> =&gt; dry_run = <span class="kw">true</span>,
+            <span class="str">"-y"</span> | <span class="str">"--yes"</span> =&gt; yes = <span class="kw">true</span>,
+            <span class="str">"--max"</span> =&gt; {
+                i += <span class="num">1</span>;
+                max_override = <span class="ty">Some</span>(
+                    args.get(i)
+                        .ok_or(<span class="str">"--max needs a number"</span>)?
+                        .parse::&lt;<span class="ty">u64</span>&gt;()
+                        .map_err(|_| <span class="str">"--max needs a number"</span>)?,
+                );
+            }
+            other <span class="kw">if</span> other.starts_with(<span class="chr">'-'</span>) =&gt; {
+                <span class="kw">return</span> <span class="ty">Err</span>(<span class="mac">format!</span>(<span class="str">"unknown flag for run: {}"</span>, other).into());
+            }
+            other =&gt; name = <span class="ty">Some</span>(other.to_string()),
+        }
+        i += <span class="num">1</span>;
+    }
+
+    <span class="kw">let</span> <span class="kw">mut</span> cfg = <span class="kw">if</span> <span class="kw">let</span> <span class="ty">Some</span>(p) = config_path {
+        <span class="kw">let</span> text = fs::read_to_string(&amp;p).map_err(|_| <span class="mac">format!</span>(<span class="str">"cannot read config: {}"</span>, p))?;
+        config::from_toml(&amp;text)?
+    } <span class="kw">else</span> <span class="kw">if</span> <span class="kw">let</span> <span class="ty">Some</span>(n) = name {
+        load(&amp;n)?
+    } <span class="kw">else</span> {
+        <span class="kw">let</span> names = list_names();
+        <span class="kw">if</span> names.is_empty() {
+            <span class="kw">return</span> <span class="ty">Err</span>(<span class="str">"no saved loops yet — run `cloop new` to create one"</span>.into());
+        }
+        <span class="kw">let</span> refs: <span class="ty">Vec</span>&lt;&amp;<span class="ty">str</span>&gt; = names.iter().map(|s| s.as_str()).collect();
+        <span class="kw">let</span> idx = ui::ask_select(<span class="str">"Which loop?"</span>, &amp;refs, <span class="num">0</span>)?;
+        load(&amp;names[idx])?
+    };
+
+    <span class="kw">if</span> <span class="kw">let</span> <span class="ty">Some</span>(m) = max_override {
+        cfg.max_iterations = m;
+    }
+
+    <span class="kw">if</span> !yes &amp;&amp; !dry_run {
+        ui::banner(&amp;<span class="mac">format!</span>(<span class="str">"cloop · {}"</span>, cfg.name));
+        <span class="mac">println!</span>();
+        <span class="mac">print!</span>(<span class="str">"{}"</span>, config::summary(&amp;cfg));
+        <span class="mac">println!</span>();
+        <span class="kw">if</span> cfg.skip_permissions {
+            ui::warn(&amp;ui::red(
+                <span class="str">"This loop bypasses ALL permission checks. Be sure you're in a sandbox."</span>,
+            ));
+        }
+        <span class="kw">let</span> go = ui::ask_bool(<span class="str">"Start the loop?"</span>, !cfg.skip_permissions)?;
+        <span class="kw">if</span> !go {
+            ui::info(<span class="str">"cancelled"</span>);
+            <span class="kw">return</span> <span class="ty">Ok</span>(<span class="num">0</span>);
+        }
+        <span class="mac">println!</span>();
+    }
+
+    runner::run(&amp;cfg, dry_run)
+}
+
+<span class="kw">fn</span> cmd_list() -&gt; <span class="ty">Result</span>&lt;<span class="ty">i32</span>, <span class="ty">Box</span>&lt;<span class="kw">dyn</span> <span class="ty">Error</span>&gt;&gt; {
+    <span class="kw">let</span> names = list_names();
+    <span class="kw">if</span> names.is_empty() {
+        ui::info(<span class="str">"no saved loops yet — run `cloop new` to create one"</span>);
+        <span class="kw">return</span> <span class="ty">Ok</span>(<span class="num">0</span>);
+    }
+    ui::step(<span class="str">"Saved loops"</span>);
+    <span class="kw">for</span> name <span class="kw">in</span> names {
+        <span class="kw">let</span> task_line = load(&amp;name)
+            .ok()
+            .and_then(|c| c.task.lines().next().map(|s| s.to_string()))
+            .unwrap_or_default();
+        <span class="mac">println!</span>(<span class="str">"  {}  {}"</span>, ui::cyan(&amp;name), ui::dim(&amp;task_line));
+    }
+    <span class="ty">Ok</span>(<span class="num">0</span>)
+}
+
+<span class="kw">fn</span> cmd_show(name: <span class="ty">Option</span>&lt;&amp;<span class="ty">str</span>&gt;) -&gt; <span class="ty">Result</span>&lt;<span class="ty">i32</span>, <span class="ty">Box</span>&lt;<span class="kw">dyn</span> <span class="ty">Error</span>&gt;&gt; {
+    <span class="kw">let</span> name = name.ok_or(<span class="str">"usage: cloop show &lt;name&gt;"</span>)?;
+    <span class="kw">let</span> cfg = load(name)?;
+    ui::banner(&amp;<span class="mac">format!</span>(<span class="str">"cloop · {}"</span>, cfg.name));
+    <span class="mac">println!</span>();
+    <span class="mac">print!</span>(<span class="str">"{}"</span>, config::summary(&amp;cfg));
+    <span class="mac">println!</span>();
+    ui::step(<span class="str">"Task"</span>);
+    <span class="mac">println!</span>(<span class="str">"{}"</span>, cfg.task);
+    <span class="mac">println!</span>();
+    ui::info(&amp;<span class="mac">format!</span>(<span class="str">"file: {}"</span>, loop_path(name).display()));
+    <span class="ty">Ok</span>(<span class="num">0</span>)
+}
+
+<span class="kw">fn</span> cmd_export(name: <span class="ty">Option</span>&lt;&amp;<span class="ty">str</span>&gt;) -&gt; <span class="ty">Result</span>&lt;<span class="ty">i32</span>, <span class="ty">Box</span>&lt;<span class="kw">dyn</span> <span class="ty">Error</span>&gt;&gt; {
+    <span class="kw">let</span> name = name.ok_or(<span class="str">"usage: cloop export &lt;name&gt;"</span>)?;
+    <span class="kw">let</span> cfg = load(name)?;
+    <span class="mac">print!</span>(<span class="str">"{}"</span>, export::to_bash(&amp;cfg));
+    <span class="ty">Ok</span>(<span class="num">0</span>)
+}
+
+<span class="kw">fn</span> cmd_edit(name: <span class="ty">Option</span>&lt;&amp;<span class="ty">str</span>&gt;) -&gt; <span class="ty">Result</span>&lt;<span class="ty">i32</span>, <span class="ty">Box</span>&lt;<span class="kw">dyn</span> <span class="ty">Error</span>&gt;&gt; {
+    <span class="kw">let</span> name = name.ok_or(<span class="str">"usage: cloop edit &lt;name&gt;"</span>)?;
+    <span class="kw">let</span> path = loop_path(name);
+    <span class="kw">if</span> !path.exists() {
+        <span class="kw">return</span> <span class="ty">Err</span>(<span class="mac">format!</span>(<span class="str">"no loop named '{}'"</span>, name).into());
+    }
+    <span class="kw">let</span> editor = env::var(<span class="str">"EDITOR"</span>).unwrap_or_else(|_| <span class="str">"vi"</span>.to_string());
+    <span class="kw">let</span> status = <span class="ty">Command</span>::new(&amp;editor).arg(&amp;path).status()?;
+    <span class="kw">if</span> !status.success() {
+        <span class="kw">return</span> <span class="ty">Err</span>(<span class="mac">format!</span>(<span class="str">"{} exited with an error"</span>, editor).into());
+    }
+    <span class="kw">match</span> load(name) {
+        <span class="ty">Ok</span>(_) =&gt; ui::success(<span class="str">"saved and valid"</span>),
+        <span class="ty">Err</span>(e) =&gt; ui::warn(&amp;<span class="mac">format!</span>(<span class="str">"saved, but parsing reported: {}"</span>, e)),
+    }
+    <span class="ty">Ok</span>(<span class="num">0</span>)
+}
+
+<span class="kw">fn</span> cmd_rm(name: <span class="ty">Option</span>&lt;&amp;<span class="ty">str</span>&gt;) -&gt; <span class="ty">Result</span>&lt;<span class="ty">i32</span>, <span class="ty">Box</span>&lt;<span class="kw">dyn</span> <span class="ty">Error</span>&gt;&gt; {
+    <span class="kw">let</span> name = name.ok_or(<span class="str">"usage: cloop rm &lt;name&gt;"</span>)?;
+    <span class="kw">let</span> path = loop_path(name);
+    <span class="kw">if</span> !path.exists() {
+        <span class="kw">return</span> <span class="ty">Err</span>(<span class="mac">format!</span>(<span class="str">"no loop named '{}'"</span>, name).into());
+    }
+    <span class="kw">let</span> ok = ui::ask_bool(&amp;<span class="mac">format!</span>(<span class="str">"Delete loop '{}'?"</span>, name), <span class="kw">false</span>)?;
+    <span class="kw">if</span> !ok {
+        ui::info(<span class="str">"kept"</span>);
+        <span class="kw">return</span> <span class="ty">Ok</span>(<span class="num">0</span>);
+    }
+    fs::remove_file(&amp;path)?;
+    ui::success(&amp;<span class="mac">format!</span>(<span class="str">"deleted '{}'"</span>, name));
+    <span class="ty">Ok</span>(<span class="num">0</span>)
+}
+
+<span class="kw">fn</span> print_help() {
+    <span class="mac">println!</span>(<span class="str">"{}"</span>, ui::bold(&amp;<span class="mac">format!</span>(<span class="str">"cloop {}"</span>, VERSION)));
+    <span class="mac">println!</span>(<span class="str">"Wrap Claude Code's headless mode in a configurable agentic loop."</span>);
+    <span class="mac">println!</span>();
+    <span class="mac">println!</span>(<span class="str">"{}"</span>, ui::bold(<span class="str">"USAGE"</span>));
+    <span class="mac">println!</span>(<span class="str">"  cloop                      run the wizard, then optionally start"</span>);
+    <span class="mac">println!</span>(<span class="str">"  cloop new                  create and save a loop"</span>);
+    <span class="mac">println!</span>(<span class="str">"  cloop run [name]           run a saved loop (prompts if no name)"</span>);
+    <span class="mac">println!</span>(<span class="str">"  cloop list                 list saved loops"</span>);
+    <span class="mac">println!</span>(<span class="str">"  cloop show &lt;name&gt;          print a loop's settings"</span>);
+    <span class="mac">println!</span>(<span class="str">"  cloop export &lt;name&gt;        print an equivalent bash script"</span>);
+    <span class="mac">println!</span>(<span class="str">"  cloop edit &lt;name&gt;          open a loop in $EDITOR"</span>);
+    <span class="mac">println!</span>(<span class="str">"  cloop rm &lt;name&gt;            delete a loop"</span>);
+    <span class="mac">println!</span>();
+    <span class="mac">println!</span>(<span class="str">"{}"</span>, ui::bold(<span class="str">"RUN FLAGS"</span>));
+    <span class="mac">println!</span>(<span class="str">"  -n, --dry-run              show the commands without executing"</span>);
+    <span class="mac">println!</span>(<span class="str">"  -y, --yes                  skip the confirmation prompt"</span>);
+    <span class="mac">println!</span>(<span class="str">"      --max &lt;n&gt;              override the iteration cap"</span>);
+    <span class="mac">println!</span>(<span class="str">"      --config &lt;path&gt;        run a loop file directly (unsaved)"</span>);
+    <span class="mac">println!</span>();
+    <span class="mac">println!</span>(<span class="str">"{}"</span>, ui::bold(<span class="str">"STORAGE"</span>));

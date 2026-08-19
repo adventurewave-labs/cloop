@@ -1,0 +1,180 @@
+309
+310
+311
+312
+313
+314
+315
+316
+317
+318
+319
+320
+321
+322
+323
+324
+325
+326
+327
+328
+329
+330
+331
+332
+333
+334
+335
+336
+337
+338</pre><pre class="code" id="code0"><span class="com">//! cloop — wrap Claude Code's headless mode in a configurable agentic loop.</span>
+<span class="com">//!</span>
+<span class="com">//! Claude Code's `--print` mode is a single batch turn: one prompt in, one</span>
+<span class="com">//! result out, an exit code you can branch on. That primitive is meant to be</span>
+<span class="com">//! composed into loops — run it, check whether you're done, run it again with</span>
+<span class="com">//! feedback. cloop is that outer loop, made reusable and saveable.</span>
+
+<span class="kw">mod</span> config;
+<span class="kw">mod</span> export;
+<span class="kw">mod</span> runner;
+<span class="kw">mod</span> ui;
+<span class="kw">mod</span> wizard;
+
+<span class="kw">use</span> std::env;
+<span class="kw">use</span> std::error::<span class="ty">Error</span>;
+<span class="kw">use</span> std::fs;
+<span class="kw">use</span> std::path::<span class="ty">PathBuf</span>;
+<span class="kw">use</span> std::process::<span class="ty">Command</span>;
+
+<span class="kw">const</span> VERSION: &amp;<span class="ty">str</span> = <span class="mac">env!</span>(<span class="str">"CARGO_PKG_VERSION"</span>);
+
+<span class="kw">fn</span> main() {
+    <span class="kw">let</span> args: <span class="ty">Vec</span>&lt;<span class="ty">String</span>&gt; = env::args().skip(<span class="num">1</span>).collect();
+    <span class="kw">let</span> code = <span class="kw">match</span> run(&amp;args) {
+        <span class="ty">Ok</span>(code) =&gt; code,
+        <span class="ty">Err</span>(e) =&gt; {
+            ui::error(&amp;e.to_string());
+            <span class="num">1</span>
+        }
+    };
+    std::process::exit(code);
+}
+
+<span class="kw">fn</span> run(args: &amp;[<span class="ty">String</span>]) -&gt; <span class="ty">Result</span>&lt;<span class="ty">i32</span>, <span class="ty">Box</span>&lt;<span class="kw">dyn</span> <span class="ty">Error</span>&gt;&gt; {
+    <span class="kw">let</span> cmd = args.first().map(|s| s.as_str()).unwrap_or(<span class="str">""</span>);
+    <span class="kw">match</span> cmd {
+        <span class="str">""</span> =&gt; cmd_new(<span class="kw">true</span>),
+        <span class="str">"new"</span> =&gt; cmd_new(<span class="kw">false</span>),
+        <span class="str">"run"</span> =&gt; cmd_run(&amp;args[<span class="num">1</span>..]),
+        <span class="str">"list"</span> | <span class="str">"ls"</span> =&gt; cmd_list(),
+        <span class="str">"show"</span> | <span class="str">"cat"</span> =&gt; cmd_show(args.get(<span class="num">1</span>).map(|s| s.as_str())),
+        <span class="str">"export"</span> =&gt; cmd_export(args.get(<span class="num">1</span>).map(|s| s.as_str())),
+        <span class="str">"edit"</span> =&gt; cmd_edit(args.get(<span class="num">1</span>).map(|s| s.as_str())),
+        <span class="str">"rm"</span> | <span class="str">"remove"</span> =&gt; cmd_rm(args.get(<span class="num">1</span>).map(|s| s.as_str())),
+        <span class="str">"-h"</span> | <span class="str">"--help"</span> | <span class="str">"help"</span> =&gt; {
+            print_help();
+            <span class="ty">Ok</span>(<span class="num">0</span>)
+        }
+        <span class="str">"-V"</span> | <span class="str">"--version"</span> =&gt; {
+            <span class="mac">println!</span>(<span class="str">"cloop {}"</span>, VERSION);
+            <span class="ty">Ok</span>(<span class="num">0</span>)
+        }
+        other =&gt; {
+            ui::error(&amp;<span class="mac">format!</span>(<span class="str">"unknown command: {}"</span>, other));
+            <span class="mac">println!</span>();
+            print_help();
+            <span class="ty">Ok</span>(<span class="num">2</span>)
+        }
+    }
+}
+
+<span class="com">// ---- storage --------------------------------------------------------------</span>
+
+<span class="kw">fn</span> config_dir() -&gt; <span class="ty">PathBuf</span> {
+    <span class="kw">if</span> <span class="kw">let</span> <span class="ty">Some</span>(d) = env::var_os(<span class="str">"CLOOP_DIR"</span>) {
+        <span class="kw">return</span> <span class="ty">PathBuf</span>::from(d);
+    }
+    <span class="kw">if</span> <span class="kw">let</span> <span class="ty">Some</span>(d) = env::var_os(<span class="str">"XDG_CONFIG_HOME"</span>) {
+        <span class="kw">let</span> <span class="kw">mut</span> p = <span class="ty">PathBuf</span>::from(d);
+        p.push(<span class="str">"cloop"</span>);
+        <span class="kw">return</span> p;
+    }
+    <span class="kw">if</span> <span class="kw">let</span> <span class="ty">Some</span>(home) = env::var_os(<span class="str">"HOME"</span>) {
+        <span class="kw">let</span> <span class="kw">mut</span> p = <span class="ty">PathBuf</span>::from(home);
+        p.push(<span class="str">".config"</span>);
+        p.push(<span class="str">"cloop"</span>);
+        <span class="kw">return</span> p;
+    }
+    <span class="ty">PathBuf</span>::from(<span class="str">".cloop"</span>)
+}
+
+<span class="kw">fn</span> loops_dir() -&gt; <span class="ty">PathBuf</span> {
+    <span class="kw">let</span> <span class="kw">mut</span> p = config_dir();
+    p.push(<span class="str">"loops"</span>);
+    p
+}
+
+<span class="kw">fn</span> loop_path(name: &amp;<span class="ty">str</span>) -&gt; <span class="ty">PathBuf</span> {
+    <span class="kw">let</span> <span class="kw">mut</span> p = loops_dir();
+    p.push(<span class="mac">format!</span>(<span class="str">"{}.toml"</span>, name));
+    p
+}
+
+<span class="kw">fn</span> list_names() -&gt; <span class="ty">Vec</span>&lt;<span class="ty">String</span>&gt; {
+    <span class="kw">let</span> <span class="kw">mut</span> names: <span class="ty">Vec</span>&lt;<span class="ty">String</span>&gt; = <span class="ty">Vec</span>::new();
+    <span class="kw">if</span> <span class="kw">let</span> <span class="ty">Ok</span>(entries) = fs::read_dir(loops_dir()) {
+        <span class="kw">for</span> entry <span class="kw">in</span> entries.flatten() {
+            <span class="kw">let</span> path = entry.path();
+            <span class="kw">if</span> path.extension().and_then(|e| e.to_str()) == <span class="ty">Some</span>(<span class="str">"toml"</span>) {
+                <span class="kw">if</span> <span class="kw">let</span> <span class="ty">Some</span>(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    names.push(stem.to_string());
+                }
+            }
+        }
+    }
+    names.sort();
+    names
+}
+
+<span class="kw">fn</span> load(name: &amp;<span class="ty">str</span>) -&gt; <span class="ty">Result</span>&lt;config::LoopConfig, <span class="ty">Box</span>&lt;<span class="kw">dyn</span> <span class="ty">Error</span>&gt;&gt; {
+    <span class="kw">let</span> path = loop_path(name);
+    <span class="kw">let</span> text = fs::read_to_string(&amp;path)
+        .map_err(|_| <span class="mac">format!</span>(<span class="str">"no loop named '{}' ({})"</span>, name, path.display()))?;
+    config::from_toml(&amp;text).map_err(|e| e.into())
+}
+
+<span class="kw">fn</span> save(cfg: &amp;config::LoopConfig, confirm_overwrite: <span class="ty">bool</span>) -&gt; <span class="ty">Result</span>&lt;<span class="ty">PathBuf</span>, <span class="ty">Box</span>&lt;<span class="kw">dyn</span> <span class="ty">Error</span>&gt;&gt; {
+    <span class="kw">let</span> dir = loops_dir();
+    fs::create_dir_all(&amp;dir)?;
+    <span class="kw">let</span> path = loop_path(&amp;cfg.name);
+    <span class="kw">if</span> confirm_overwrite &amp;&amp; path.exists() {
+        <span class="kw">let</span> ok = ui::ask_bool(
+            &amp;<span class="mac">format!</span>(<span class="str">"Loop '{}' already exists. Overwrite?"</span>, cfg.name),
+            <span class="kw">false</span>,
+        )?;
+        <span class="kw">if</span> !ok {
+            <span class="kw">return</span> <span class="ty">Err</span>(<span class="str">"aborted — not overwritten"</span>.into());
+        }
+    }
+    fs::write(&amp;path, config::to_toml(cfg))?;
+    <span class="ty">Ok</span>(path)
+}
+
+<span class="com">// ---- commands -------------------------------------------------------------</span>
+
+<span class="kw">fn</span> cmd_new(offer_run: <span class="ty">bool</span>) -&gt; <span class="ty">Result</span>&lt;<span class="ty">i32</span>, <span class="ty">Box</span>&lt;<span class="kw">dyn</span> <span class="ty">Error</span>&gt;&gt; {
+    <span class="kw">let</span> cfg = wizard::run_wizard(<span class="str">"my-loop"</span>)?;
+
+    <span class="mac">println!</span>();
+    ui::step(<span class="str">"Summary"</span>);
+    <span class="mac">print!</span>(<span class="str">"{}"</span>, config::summary(&amp;cfg));
+    <span class="mac">println!</span>();
+
+    <span class="kw">let</span> path = save(&amp;cfg, <span class="kw">true</span>)?;
+    ui::success(&amp;<span class="mac">format!</span>(<span class="str">"saved to {}"</span>, path.display()));
+    <span class="mac">println!</span>();
+
+    <span class="kw">if</span> offer_run {
+        <span class="kw">let</span> dry = ui::ask_bool(<span class="str">"Preview the commands first (dry run)?"</span>, <span class="kw">true</span>)?;
+        <span class="kw">if</span> dry {
+            <span class="mac">println!</span>();
