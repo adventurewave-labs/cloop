@@ -6,9 +6,9 @@ it again with feedback, until the tests pass, a marker appears, or you hit the
 iteration cap.
 
 ```
-┌──────────────────────────┐
+┌────────────────────────────┐
 │  cloop · fix-tests       │
-└──────────────────────────┘
+└────────────────────────────┘
   name           fix-tests
   task           Make the integration suite pass (…)
   workdir        .
