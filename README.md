@@ -5,18 +5,7 @@
 it again with feedback, until the tests pass, a marker appears, or you hit the
 iteration cap.
 
-```
-┌────────────────────────────┐
-│  cloop · fix-tests       │
-└────────────────────────────┘
-  name           fix-tests
-  task           Make the integration suite pass (…)
-  workdir        .
-  model          sonnet
-  stop           command → cargo test
-  max iters      25
-  carry context  yes
-```
+![cloop demo](cloop-demo.gif)
 
 ## Why
 
@@ -42,11 +31,6 @@ cargo install --path .
 # or just build the binary
 cargo build --release   # -> target/release/cloop
 ```
-
-> **Heads up:** this crate was authored and reviewed carefully but has not been
-> compiled in the environment it was generated in (no toolchain there). Run
-> `cargo build` / `cargo test` locally first — it's zero-dependency, so the
-> build is fast and there's nothing external to audit.
 
 ## Quickstart
 
