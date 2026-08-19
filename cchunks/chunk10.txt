@@ -1,0 +1,180 @@
+534
+535
+536
+537
+538
+539
+540
+541</pre><pre class="code" id="code1"><span class="com">//! Loop configuration: the data model, a tiny TOML-subset (de)serializer,</span>
+<span class="com">//! Claude Code argument construction, and per-iteration prompt rendering.</span>
+<span class="com">//!</span>
+<span class="com">//! The serializer deliberately supports only a flat subset of TOML — top-level</span>
+<span class="com">//! `key = value` pairs, basic strings, integers, booleans, and triple-quoted</span>
+<span class="com">//! multi-line strings. That keeps the parser ~80 lines and dependency-free.</span>
+<span class="com">//! Assumption: a multi-line value never contains a line that is exactly `"""`.</span>
+
+<span class="kw">use</span> <span class="kw">crate</span>::ui;
+<span class="kw">use</span> std::collections::<span class="ty">BTreeMap</span>;
+
+<span class="com">/// How a loop decides it is finished.</span>
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<span class="kw">pub</span> <span class="kw">enum</span> StopKind {
+    <span class="com">/// Run a fixed number of iterations.</span>
+    Iterations,
+    <span class="com">/// Stop when Claude prints a marker string.</span>
+    Marker,
+    <span class="com">/// Stop when a shell command exits 0.</span>
+    <span class="ty">Command</span>,
+}
+
+<span class="kw">impl</span> StopKind {
+    <span class="kw">pub</span> <span class="kw">fn</span> as_str(<span class="kw">self</span>) -&gt; &amp;'<span class="kw">static</span> <span class="ty">str</span> {
+        <span class="kw">match</span> <span class="kw">self</span> {
+            StopKind::Iterations =&gt; <span class="str">"iterations"</span>,
+            StopKind::Marker =&gt; <span class="str">"marker"</span>,
+            StopKind::<span class="ty">Command</span> =&gt; <span class="str">"command"</span>,
+        }
+    }
+    <span class="kw">pub</span> <span class="kw">fn</span> from_str(s: &amp;<span class="ty">str</span>) -&gt; StopKind {
+        <span class="kw">match</span> s {
+            <span class="str">"iterations"</span> =&gt; StopKind::Iterations,
+            <span class="str">"marker"</span> =&gt; StopKind::Marker,
+            _ =&gt; StopKind::<span class="ty">Command</span>,
+        }
+    }
+}
+
+<span class="com">/// A single saved loop.</span>
+#[derive(Debug, Clone)]
+<span class="kw">pub</span> <span class="kw">struct</span> LoopConfig {
+    <span class="kw">pub</span> name: <span class="ty">String</span>,
+    <span class="kw">pub</span> task: <span class="ty">String</span>,
+    <span class="kw">pub</span> workdir: <span class="ty">String</span>,
+    <span class="kw">pub</span> model: <span class="ty">String</span>,
+    <span class="kw">pub</span> stop_kind: StopKind,
+    <span class="kw">pub</span> stop_command: <span class="ty">String</span>,
+    <span class="kw">pub</span> stop_marker: <span class="ty">String</span>,
+    <span class="kw">pub</span> max_iterations: <span class="ty">u64</span>,
+    <span class="kw">pub</span> carry_context: <span class="ty">bool</span>,
+    <span class="kw">pub</span> permission_mode: <span class="ty">String</span>,
+    <span class="kw">pub</span> skip_permissions: <span class="ty">bool</span>,
+    <span class="kw">pub</span> max_turns: <span class="ty">u64</span>,
+    <span class="kw">pub</span> allowed_tools: <span class="ty">String</span>,
+    <span class="kw">pub</span> delay_secs: <span class="ty">u64</span>,
+    <span class="kw">pub</span> extra_args: <span class="ty">String</span>,
+    <span class="kw">pub</span> iter_prompt: <span class="ty">String</span>,
+}
+
+<span class="kw">impl</span> Default <span class="kw">for</span> LoopConfig {
+    <span class="kw">fn</span> default() -&gt; <span class="kw">Self</span> {
+        LoopConfig {
+            name: <span class="ty">String</span>::new(),
+            task: <span class="ty">String</span>::new(),
+            workdir: <span class="str">"."</span>.to_string(),
+            model: <span class="ty">String</span>::new(),
+            stop_kind: StopKind::<span class="ty">Command</span>,
+            stop_command: <span class="ty">String</span>::new(),
+            stop_marker: <span class="str">"LOOP_DONE"</span>.to_string(),
+            max_iterations: <span class="num">25</span>,
+            carry_context: <span class="kw">true</span>,
+            permission_mode: <span class="ty">String</span>::new(),
+            skip_permissions: <span class="kw">false</span>,
+            max_turns: <span class="num">0</span>,
+            allowed_tools: <span class="ty">String</span>::new(),
+            delay_secs: <span class="num">0</span>,
+            extra_args: <span class="ty">String</span>::new(),
+            iter_prompt: <span class="ty">String</span>::new(),
+        }
+    }
+}
+
+<span class="com">/// The built-in per-iteration prompt template for a given stop mode.</span>
+<span class="kw">pub</span> <span class="kw">fn</span> default_iter_prompt(kind: StopKind) -&gt; <span class="ty">String</span> {
+    <span class="kw">match</span> kind {
+        StopKind::<span class="ty">Command</span> =&gt; <span class="str">"\
+Iteration {iteration} of {max}.
+
+The check command `{stop_command}` is still failing. Its latest output was:
+
+{check_output}
+
+Diagnose why it is failing and fix it. Make concrete edits — do not just \
+describe the problem. When you believe it is resolved, stop."</span>
+            .to_string(),
+        StopKind::Marker =&gt; <span class="str">"\
+Iteration {iteration} of {max}.
+
+Continue working on the task:
+
+{task}
+
+When the task is fully complete, print the exact line {stop_marker} on its own \
+line and nothing after it."</span>
+            .to_string(),
+        StopKind::Iterations =&gt; <span class="str">"\
+Iteration {iteration} of {max}. Continue working on the task:
+
+{task}"</span>
+            .to_string(),
+    }
+}
+
+<span class="com">/// Build the argument vector for one `claude` invocation.</span>
+<span class="kw">pub</span> <span class="kw">fn</span> claude_args(cfg: &amp;LoopConfig, iteration: <span class="ty">u64</span>, prompt: &amp;<span class="ty">str</span>) -&gt; <span class="ty">Vec</span>&lt;<span class="ty">String</span>&gt; {
+    <span class="kw">let</span> <span class="kw">mut</span> args: <span class="ty">Vec</span>&lt;<span class="ty">String</span>&gt; = <span class="ty">Vec</span>::new();
+    args.push(<span class="str">"--print"</span>.to_string());
+    <span class="kw">if</span> iteration &gt; <span class="num">1</span> &amp;&amp; cfg.carry_context {
+        args.push(<span class="str">"--continue"</span>.to_string());
+    }
+    <span class="kw">if</span> !cfg.model.is_empty() {
+        args.push(<span class="str">"--model"</span>.to_string());
+        args.push(cfg.model.clone());
+    }
+    <span class="kw">if</span> cfg.skip_permissions {
+        args.push(<span class="str">"--dangerously-skip-permissions"</span>.to_string());
+    } <span class="kw">else</span> <span class="kw">if</span> !cfg.permission_mode.is_empty() {
+        args.push(<span class="str">"--permission-mode"</span>.to_string());
+        args.push(cfg.permission_mode.clone());
+    }
+    <span class="kw">if</span> cfg.max_turns &gt; <span class="num">0</span> {
+        args.push(<span class="str">"--max-turns"</span>.to_string());
+        args.push(cfg.max_turns.to_string());
+    }
+    <span class="kw">if</span> !cfg.allowed_tools.is_empty() {
+        args.push(<span class="str">"--allowedTools"</span>.to_string());
+        args.push(cfg.allowed_tools.clone());
+    }
+    <span class="kw">for</span> a <span class="kw">in</span> split_args(&amp;cfg.extra_args) {
+        args.push(a);
+    }
+    <span class="com">// The prompt is a positional argument and must come last.</span>
+    args.push(prompt.to_string());
+    args
+}
+
+<span class="com">/// Render the prompt for a given iteration.</span>
+<span class="kw">pub</span> <span class="kw">fn</span> render_prompt(cfg: &amp;LoopConfig, iteration: <span class="ty">u64</span>, check_output: &amp;<span class="ty">str</span>) -&gt; <span class="ty">String</span> {
+    <span class="kw">if</span> iteration &lt;= <span class="num">1</span> {
+        <span class="kw">if</span> cfg.stop_kind == StopKind::Marker {
+            <span class="kw">return</span> <span class="mac">format!</span>(
+                <span class="str">"{}\n\nWhen the task is fully complete, print the exact line {} on its \
+own line and nothing after it."</span>,
+                cfg.task, cfg.stop_marker
+            );
+        }
+        <span class="kw">return</span> cfg.task.clone();
+    }
+    <span class="kw">let</span> template = <span class="kw">if</span> cfg.iter_prompt.is_empty() {
+        default_iter_prompt(cfg.stop_kind)
+    } <span class="kw">else</span> {
+        cfg.iter_prompt.clone()
+    };
+    template
+        .replace(<span class="str">"{iteration}"</span>, &amp;iteration.to_string())
+        .replace(<span class="str">"{max}"</span>, &amp;cfg.max_iterations.to_string())
+        .replace(<span class="str">"{stop_command}"</span>, &amp;cfg.stop_command)
+        .replace(<span class="str">"{stop_marker}"</span>, &amp;cfg.stop_marker)
+        .replace(<span class="str">"{check_output}"</span>, check_output)
+        .replace(<span class="str">"{task}"</span>, &amp;cfg.task)
+}
+
