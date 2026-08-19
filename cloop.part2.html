@@ -1,0 +1,40 @@
+impl Default for LoopConfig {
+    fn default() -> Self {
+        LoopConfig {
+            name: String::new(),
+            task: String::new(),
+            workdir: ".".to_string(),
+            model: String::new(),
+            stop_kind: StopKind::Command,
+            stop_command: String::new(),
+            stop_marker: "LOOP_DONE".to_string(),
+            max_iterations: 25,
+            carry_context: true,
+            permission_mode: String::new(),
+            skip_permissions: false,
+            max_turns: 0,
+            allowed_tools: String::new(),
+            delay_secs: 0,
+            extra_args: String::new(),
+            iter_prompt: String::new(),
+        }
+    }
+}
+
+pub fn default_iter_prompt(kind: StopKind) -> String {
+    match kind {
+        StopKind::Command => "Iteration {iteration} of {max}. The check command `{stop_command}` is still failing. Its latest output was: {check_output} Diagnose why it is failing and fix it.".to_string(),
+        StopKind::Marker => "Iteration {iteration} of {max}. Continue working on the task: {task} When the task is fully complete, print the exact line {stop_marker} on its own line and nothing after it.".to_string(),
+        StopKind::Iterations => "Iteration {iteration} of {max}. Continue working on the task: {task}".to_string(),
+    }
+}
+
+pub fn claude_args(cfg: &LoopConfig, iteration: u64, prompt: &str) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    args.push("--print".to_string());
+    if iteration > 1 && cfg.carry_context {
+        args.push("--continue".to_string());
+    }
+    args.push(prompt.to_string());
+    args
+}
