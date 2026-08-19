@@ -1,0 +1,180 @@
+201
+202
+203
+204
+205
+206
+207
+208
+209
+210
+211
+212
+213
+214
+215
+216
+217
+218
+219
+220
+221
+222
+223
+224
+225
+226
+227
+228
+229
+230
+231
+232
+233
+234
+235
+236
+237
+238
+239
+240
+241
+242
+243
+244
+245
+246
+247
+248
+249
+250</pre><pre class="code" id="code4"><span class="com">//! Tiny terminal UI helpers — colors and interactive prompts, zero dependencies.</span>
+<span class="com">//!</span>
+<span class="com">//! Everything here is built on std only. Colors use ANSI escape codes and are</span>
+<span class="com">//! suppressed when stdout is not a TTY or when `NO_COLOR` is set. Prompts are</span>
+<span class="com">//! numbered-menu style (no arrow keys); swapping in a crate like `inquire`</span>
+<span class="com">//! later would be a clean drop-in upgrade.</span>
+
+<span class="kw">use</span> std::<span class="ty">io</span>::{<span class="kw">self</span>, BufRead, IsTerminal, Write};
+
+<span class="com">/// Whether ANSI color should be emitted on stdout.</span>
+<span class="kw">pub</span> <span class="kw">fn</span> color_enabled() -&gt; <span class="ty">bool</span> {
+    <span class="kw">if</span> std::env::var_os(<span class="str">"NO_COLOR"</span>).is_some() {
+        <span class="kw">return</span> <span class="kw">false</span>;
+    }
+    <span class="ty">io</span>::stdout().is_terminal()
+}
+
+<span class="com">/// Wrap `s` in an ANSI SGR code when color is enabled.</span>
+<span class="kw">pub</span> <span class="kw">fn</span> c(s: &amp;<span class="ty">str</span>, code: &amp;<span class="ty">str</span>) -&gt; <span class="ty">String</span> {
+    <span class="kw">if</span> color_enabled() {
+        <span class="mac">format!</span>(<span class="str">"\x1b[{}m{}\x1b[0m"</span>, code, s)
+    } <span class="kw">else</span> {
+        s.to_string()
+    }
+}
+
+<span class="kw">pub</span> <span class="kw">fn</span> bold(s: &amp;<span class="ty">str</span>) -&gt; <span class="ty">String</span> {
+    c(s, <span class="str">"1"</span>)
+}
+<span class="kw">pub</span> <span class="kw">fn</span> dim(s: &amp;<span class="ty">str</span>) -&gt; <span class="ty">String</span> {
+    c(s, <span class="str">"2"</span>)
+}
+<span class="kw">pub</span> <span class="kw">fn</span> cyan(s: &amp;<span class="ty">str</span>) -&gt; <span class="ty">String</span> {
+    c(s, <span class="str">"36"</span>)
+}
+<span class="kw">pub</span> <span class="kw">fn</span> green(s: &amp;<span class="ty">str</span>) -&gt; <span class="ty">String</span> {
+    c(s, <span class="str">"32"</span>)
+}
+<span class="kw">pub</span> <span class="kw">fn</span> yellow(s: &amp;<span class="ty">str</span>) -&gt; <span class="ty">String</span> {
+    c(s, <span class="str">"33"</span>)
+}
+<span class="kw">pub</span> <span class="kw">fn</span> red(s: &amp;<span class="ty">str</span>) -&gt; <span class="ty">String</span> {
+    c(s, <span class="str">"31"</span>)
+}
+<span class="kw">pub</span> <span class="kw">fn</span> magenta(s: &amp;<span class="ty">str</span>) -&gt; <span class="ty">String</span> {
+    c(s, <span class="str">"35"</span>)
+}
+
+<span class="com">/// Print a boxed banner. `title` should be plain text (no ANSI codes), since</span>
+<span class="com">/// the box width is measured by character count.</span>
+<span class="kw">pub</span> <span class="kw">fn</span> banner(title: &amp;<span class="ty">str</span>) {
+    <span class="kw">let</span> width = title.chars().count();
+    <span class="kw">let</span> line = <span class="str">"─"</span>.repeat(width + <span class="num">2</span>);
+    <span class="mac">println!</span>(<span class="str">"{}"</span>, cyan(&amp;<span class="mac">format!</span>(<span class="str">"┌{}┐"</span>, line)));
+    <span class="mac">println!</span>(<span class="str">"{} {} {}"</span>, cyan(<span class="str">"│"</span>), bold(title), cyan(<span class="str">"│"</span>));
+    <span class="mac">println!</span>(<span class="str">"{}"</span>, cyan(&amp;<span class="mac">format!</span>(<span class="str">"└{}┘"</span>, line)));
+}
+
+<span class="kw">pub</span> <span class="kw">fn</span> info(msg: &amp;<span class="ty">str</span>) {
+    <span class="mac">println!</span>(<span class="str">"{} {}"</span>, cyan(<span class="str">"ℹ"</span>), msg);
+}
+<span class="kw">pub</span> <span class="kw">fn</span> warn(msg: &amp;<span class="ty">str</span>) {
+    <span class="mac">println!</span>(<span class="str">"{} {}"</span>, yellow(<span class="str">"⚠"</span>), msg);
+}
+<span class="kw">pub</span> <span class="kw">fn</span> success(msg: &amp;<span class="ty">str</span>) {
+    <span class="mac">println!</span>(<span class="str">"{} {}"</span>, green(<span class="str">"✓"</span>), msg);
+}
+<span class="kw">pub</span> <span class="kw">fn</span> error(msg: &amp;<span class="ty">str</span>) {
+    <span class="mac">eprintln!</span>(<span class="str">"{} {}"</span>, red(<span class="str">"✗"</span>), msg);
+}
+<span class="kw">pub</span> <span class="kw">fn</span> step(msg: &amp;<span class="ty">str</span>) {
+    <span class="mac">println!</span>(<span class="str">"{} {}"</span>, magenta(<span class="str">"▸"</span>), bold(msg));
+}
+
+<span class="com">/// Read one line from stdin. Returns `Ok(None)` on EOF.</span>
+<span class="kw">fn</span> read_line_opt() -&gt; <span class="ty">io</span>::<span class="ty">Result</span>&lt;<span class="ty">Option</span>&lt;<span class="ty">String</span>&gt;&gt; {
+    <span class="kw">let</span> <span class="kw">mut</span> buf = <span class="ty">String</span>::new();
+    <span class="kw">let</span> n = <span class="ty">io</span>::stdin().lock().read_line(&amp;<span class="kw">mut</span> buf)?;
+    <span class="kw">if</span> n == <span class="num">0</span> {
+        <span class="ty">Ok</span>(<span class="ty">None</span>)
+    } <span class="kw">else</span> {
+        <span class="kw">while</span> buf.ends_with(<span class="chr">'\n'</span>) || buf.ends_with(<span class="chr">'\r'</span>) {
+            buf.pop();
+        }
+        <span class="ty">Ok</span>(<span class="ty">Some</span>(buf))
+    }
+}
+
+<span class="kw">fn</span> flush() {
+    <span class="kw">let</span> _ = <span class="ty">io</span>::stdout().flush();
+}
+
+<span class="com">/// Ask for free text.</span>
+<span class="com">///</span>
+<span class="com">/// * `default == None` — required; re-prompt until non-empty (errors on EOF).</span>
+<span class="com">/// * `default == Some("")` — optional; shows `(optional)`, may return "".</span>
+<span class="com">/// * `default == Some(x)` — shows `[x]`, returns `x` on empty input.</span>
+<span class="kw">pub</span> <span class="kw">fn</span> ask_text(prompt: &amp;<span class="ty">str</span>, default: <span class="ty">Option</span>&lt;&amp;<span class="ty">str</span>&gt;) -&gt; <span class="ty">io</span>::<span class="ty">Result</span>&lt;<span class="ty">String</span>&gt; {
+    <span class="kw">loop</span> {
+        <span class="kw">match</span> default {
+            <span class="ty">None</span> =&gt; <span class="mac">print!</span>(<span class="str">"{} "</span>, cyan(&amp;<span class="mac">format!</span>(<span class="str">"{}:"</span>, prompt))),
+            <span class="ty">Some</span>(<span class="str">""</span>) =&gt; <span class="mac">print!</span>(<span class="str">"{} {} "</span>, cyan(&amp;<span class="mac">format!</span>(<span class="str">"{}:"</span>, prompt)), dim(<span class="str">"(optional)"</span>)),
+            <span class="ty">Some</span>(d) =&gt; <span class="mac">print!</span>(
+                <span class="str">"{} {} "</span>,
+                cyan(&amp;<span class="mac">format!</span>(<span class="str">"{}:"</span>, prompt)),
+                dim(&amp;<span class="mac">format!</span>(<span class="str">"[{}]"</span>, d))
+            ),
+        }
+        flush();
+        <span class="kw">match</span> read_line_opt()? {
+            <span class="ty">None</span> =&gt; {
+                <span class="mac">println!</span>();
+                <span class="kw">match</span> default {
+                    <span class="ty">Some</span>(d) =&gt; <span class="kw">return</span> <span class="ty">Ok</span>(d.to_string()),
+                    <span class="ty">None</span> =&gt; {
+                        <span class="kw">return</span> <span class="ty">Err</span>(<span class="ty">io</span>::<span class="ty">Error</span>::new(
+                            <span class="ty">io</span>::ErrorKind::UnexpectedEof,
+                            <span class="str">"input closed while a required value was expected"</span>,
+                        ))
+                    }
+                }
+            }
+            <span class="ty">Some</span>(line) =&gt; {
+                <span class="kw">let</span> line = line.trim();
+                <span class="kw">if</span> line.is_empty() {
+                    <span class="kw">match</span> default {
+                        <span class="ty">Some</span>(d) =&gt; <span class="kw">return</span> <span class="ty">Ok</span>(d.to_string()),
+                        <span class="ty">None</span> =&gt; {
+                            warn(<span class="str">"This field is required."</span>);
+                            <span class="kw">continue</span>;
+                        }
