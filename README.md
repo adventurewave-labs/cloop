@@ -20,6 +20,11 @@ re-hand-roll as a throwaway bash script every time.
 questions once, it saves a small TOML file, and from then on it's `cloop run
 <name>`. It fits naturally alongside the rest of the turbo-flow toolchain.
 
+If you want a parsed termination contract, a `--verify` gate, and a published
+crates.io release, see the org's other loop runner,
+[loopgen](https://github.com/adventurewave-labs/loopgen-rs) — `cloop` optimizes
+for a zero-config wizard and named, reusable loop files instead.
+
 ## Install
 
 Requires a Rust toolchain (MSRV **1.70**) and the `claude` CLI on your `PATH`.
