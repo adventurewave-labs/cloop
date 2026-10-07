@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/banner.svg" alt="cloop — animated banner" width="100%"></p>
+
 # cloop (archived)
 
 > [!IMPORTANT]
